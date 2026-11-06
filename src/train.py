@@ -1,7 +1,7 @@
 """
 Model training and evaluation pipeline.
-Generates baseline synthetic tabular data (or loads raw data),
-trains an ensemble model, evaluates performance, and exports model artifacts.
+Generates a baseline synthetic dataset (Laptop Specifications -> Price),
+trains an ensemble regression pipeline, evaluates performance, and exports artifacts.
 """
 
 from pathlib import Path
@@ -20,64 +20,57 @@ DATA_DIR = PROJECT_ROOT / "data"
 MODELS_DIR = PROJECT_ROOT / "models"
 
 
-def generate_sample_dataset(n_samples: int = 1500, random_state: int = 42) -> pd.DataFrame:
-    """Generates synthetic environmental / urban metrics data for demonstration."""
+def generate_baseline_dataset(n_samples: int = 1200, random_state: int = 42) -> pd.DataFrame:
+    """Generates synthetic laptop hardware specs and market price data."""
     np.random.seed(random_state)
 
-    temperature = np.random.uniform(-5.0, 32.0, n_samples)
-    humidity = np.random.uniform(20.0, 95.0, n_samples)
-    wind_speed = np.random.uniform(0.5, 18.0, n_samples)
-    traffic_index = np.random.uniform(10.0, 100.0, n_samples)
-    hour_of_day = np.random.randint(0, 24, n_samples)
+    ram_gb = np.random.choice([8, 16, 32, 64], size=n_samples, p=[0.35, 0.45, 0.15, 0.05])
+    cpu_cores = np.random.choice([4, 6, 8, 12, 16], size=n_samples, p=[0.2, 0.35, 0.3, 0.1, 0.05])
+    storage_gb = np.random.choice([256, 512, 1024, 2048], size=n_samples, p=[0.25, 0.45, 0.25, 0.05])
+    weight_kg = np.random.uniform(1.1, 2.8, size=n_samples)
+    has_dedicated_gpu = np.random.choice([0, 1], size=n_samples, p=[0.6, 0.4])
 
-    # Synthetic target with realistic domain noise: Air Quality Index (AQI PM2.5)
-    # Higher traffic + low wind + low temp = higher pollution
-    base_aqi = (
-        0.5 * traffic_index
-        - 1.8 * wind_speed
-        + 0.3 * (30 - temperature)
-        + 0.15 * humidity
-        + 10.0
+    # Formula for synthetic price with realistic noise
+    base_price = (
+        300
+        + (ram_gb * 18)
+        + (cpu_cores * 45)
+        + (storage_gb * 0.35)
+        + (has_dedicated_gpu * 450)
+        - (weight_kg * 40)
     )
-    noise = np.random.normal(0, 4.0, n_samples)
-    target_aqi = np.clip(base_aqi + noise, 5.0, 180.0)
+    noise = np.random.normal(0, 50, n_samples)
+    price_usd = np.round(np.clip(base_price + noise, 350, 4500), 2)
 
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {
-            "temperature_c": np.round(temperature, 1),
-            "humidity_pct": np.round(humidity, 1),
-            "wind_speed_kmh": np.round(wind_speed, 1),
-            "traffic_density": np.round(traffic_index, 1),
-            "hour_of_day": hour_of_day,
-            "target_aqi": np.round(target_aqi, 1),
+            "ram_gb": ram_gb,
+            "cpu_cores": cpu_cores,
+            "storage_gb": storage_gb,
+            "weight_kg": np.round(weight_kg, 2),
+            "has_dedicated_gpu": has_dedicated_gpu,
+            "price_usd": price_usd,
         }
     )
-    return df
 
 
 def run_pipeline():
-    print("[1/4] Loading and preparing data...")
+    print("[1/4] Preparing directories and dataset...")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     raw_path = DATA_DIR / "raw" / "dataset.csv"
     if not raw_path.exists():
         raw_path.parent.mkdir(parents=True, exist_ok=True)
-        df = generate_sample_dataset()
+        df = generate_baseline_dataset()
         df.to_csv(raw_path, index=False)
         print(f"      Created baseline dataset: {raw_path}")
     else:
         df = pd.read_csv(raw_path)
         print(f"      Loaded existing dataset: {raw_path}")
 
-    feature_cols = [
-        "temperature_c",
-        "humidity_pct",
-        "wind_speed_kmh",
-        "traffic_density",
-        "hour_of_day",
-    ]
-    target_col = "target_aqi"
+    feature_cols = ["ram_gb", "cpu_cores", "storage_gb", "weight_kg", "has_dedicated_gpu"]
+    target_col = "price_usd"
 
     X = df[feature_cols]
     y = df[target_col]
@@ -86,35 +79,37 @@ def run_pipeline():
         X, y, test_size=0.2, random_state=42
     )
 
-    print(f"[2/4] Training set size: {len(X_train)} | Test set size: {len(X_test)}")
+    print(f"[2/4] Training model (Train: {len(X_train)}, Test: {len(X_test)})...")
     pipeline = Pipeline(
         [
             ("scaler", StandardScaler()),
-            ("regressor", RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42)),
+            ("regressor", RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)),
         ]
     )
 
     pipeline.fit(X_train, y_train)
 
-    print("[3/4] Evaluating model...")
-    predictions = pipeline.predict(X_test)
-    mae = mean_absolute_error(y_test, predictions)
-    rmse = np.sqrt(mean_squared_error(y_test, predictions))
-    r2 = r2_score(y_test, predictions)
+    print("[3/4] Evaluating metrics...")
+    preds = pipeline.predict(X_test)
+    mae = mean_absolute_error(y_test, preds)
+    rmse = np.sqrt(mean_squared_error(y_test, preds))
+    r2 = r2_score(y_test, preds)
 
-    print(f"      Mean Absolute Error (MAE) : {mae:.2f}")
-    print(f"      Root Mean Squared Error   : {rmse:.2f}")
-    print(f"      R-squared (R2 score)      : {r2:.4f}")
+    print(f"      MAE  : ${mae:.2f}")
+    print(f"      RMSE : ${rmse:.2f}")
+    print(f"      R²   : {r2:.4f}")
 
-    print("[4/4] Serializing model artifact...")
+    print("[4/4] Serializing model pipeline...")
     artifact_path = MODELS_DIR / "model_pipeline.joblib"
-    artifact_payload = {
-        "pipeline": pipeline,
-        "feature_names": feature_cols,
-        "metrics": {"mae": round(mae, 2), "rmse": round(rmse, 2), "r2": round(r2, 4)},
-    }
-    joblib.dump(artifact_payload, artifact_path)
-    print(f"      Pipeline artifact saved successfully to: {artifact_path}")
+    joblib.dump(
+        {
+            "pipeline": pipeline,
+            "feature_names": feature_cols,
+            "metrics": {"mae": round(mae, 2), "rmse": round(rmse, 2), "r2": round(r2, 4)},
+        },
+        artifact_path,
+    )
+    print(f"      Artifact saved to: {artifact_path}")
 
 
 if __name__ == "__main__":
