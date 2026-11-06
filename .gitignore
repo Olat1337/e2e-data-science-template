@@ -1,1 +1,29 @@
+# Byte-compiled / optimized / Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Data and Models (store artifacts locally or in remote storage)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+models/*
+!models/.gitkeep
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IDE configs
+.vscode/
+.idea/
+*.swp
+.DS_Store
